@@ -33,10 +33,9 @@
 2. Register an app in Azure AD with `Mail.Read` and `Mail.Send` permissions
 3. Update the credential ID `OUTLOOK_CREDENTIAL_ID` in both Outlook nodes
 
-### OpenAI
-1. Go to **Credentials → Add Credential → OpenAI API**
-2. Paste your API key
-3. Update `OPENAI_CREDENTIAL_ID` in the AI node
+### Azure OpenAI
+- No credential node needed — auth uses n8n Variables (see Step 3)
+- Endpoint is pre-configured: `https://dtho-mlc062v8-eastus2.openai.azure.com/`
 
 ### Halo PSA
 - No credential node needed — auth is handled via HTTP request using n8n Variables (see Step 3)
@@ -49,11 +48,16 @@ Go to **Settings → Variables** and create:
 
 | Variable | Description | Example |
 |---|---|---|
+| `AZURE_OPENAI_API_KEY` | API key from Azure OpenAI resource | `BLEl4av3f...` |
+| `AZURE_OPENAI_DEPLOYMENT` | Your deployed model name | `gpt-4o-mini` |
 | `HALO_INSTANCE` | Your Halo subdomain | `mycompany` |
 | `HALO_CLIENT_ID` | Halo PSA API client ID | `abc123` |
 | `HALO_CLIENT_SECRET` | Halo PSA API client secret | `secret...` |
 | `HALO_TICKET_TYPE_ID` | Ticket type ID for alerts | `1` |
 | `ALERT_REVIEW_EMAIL` | Who gets notified on unmatched alerts | `helpdesk@you.com` |
+
+**Azure OpenAI endpoint** is hardcoded in the workflow:
+`https://dtho-mlc062v8-eastus2.openai.azure.com/`
 
 To get your Halo API credentials:
 1. In Halo PSA go to **Configuration → Integrations → Halo PSA API**

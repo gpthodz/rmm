@@ -39,34 +39,23 @@
     {
       "id": "ai-extract",
       "name": "AI - Extract Company & Device",
-      "type": "@n8n/n8n-nodes-langchain.openAi",
-      "typeVersion": 1,
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
       "position": [640, 300],
-      "credentials": {
-        "openAiApi": {
-          "id": "OPENAI_CREDENTIAL_ID",
-          "name": "OpenAI"
-        }
-      },
       "parameters": {
-        "resource": "chat",
-        "model": "gpt-4o-mini",
-        "messages": {
-          "values": [
-            {
-              "role": "system",
-              "content": "You are an IT alert parser. Extract structured data from alert emails. Respond ONLY with valid JSON — no markdown, no explanation.\n\nExpected output:\n{\n  \"company\": \"<client or company name, or null>\",\n  \"device\": \"<device hostname or name, or null>\",\n  \"alert_summary\": \"<one-line summary of what the alert is about>\",\n  \"severity\": \"<Critical|High|Medium|Low>\",\n  \"service_source\": \"<what service/tool sent this alert, e.g. SolarWinds, Datto, Webroot, etc.>\"\n}"
-            },
-            {
-              "role": "user",
-              "content": "=Subject: {{ $json.subject }}\n\nFrom: {{ $json.sender }}\n\nBody:\n{{ $json.body }}"
-            }
+        "method": "POST",
+        "url": "=https://dtho-mlc062v8-eastus2.openai.azure.com/openai/deployments/{{ $vars.AZURE_OPENAI_DEPLOYMENT }}/chat/completions?api-version=2024-02-15-preview",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "api-key", "value": "={{ $vars.AZURE_OPENAI_API_KEY }}" },
+            { "name": "Content-Type", "value": "application/json" }
           ]
         },
-        "options": {
-          "temperature": 0,
-          "maxTokens": 300
-        }
+        "sendBody": true,
+        "bodyContentType": "json",
+        "body": "={\n  \"messages\": [\n    {\n      \"role\": \"system\",\n      \"content\": \"You are an IT alert parser. Extract structured data from alert emails. Respond ONLY with valid JSON — no markdown, no explanation.\\n\\nExpected output:\\n{\\n  \\\"company\\\": \\\"<client or company name, or null>\\\",\\n  \\\"device\\\": \\\"<device hostname or name, or null>\\\",\\n  \\\"alert_summary\\\": \\\"<one-line summary of what the alert is about>\\\",\\n  \\\"severity\\\": \\\"<Critical|High|Medium|Low>\\\",\\n  \\\"service_source\\\": \\\"<what service/tool sent this alert, e.g. SolarWinds, Datto, Webroot, etc.>\\\"\\n}\"\n    },\n    {\n      \"role\": \"user\",\n      \"content\": \"Subject: {{ $json.subject }}\\n\\nFrom: {{ $json.sender }}\\n\\nBody:\\n{{ $json.body }}\"\n    }\n  ],\n  \"temperature\": 0,\n  \"max_tokens\": 300\n}",
+        "options": {}
       }
     },
     {
