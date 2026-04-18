@@ -1,0 +1,298 @@
+{
+  "name": "Halo PSA - Email Alert to Ticket",
+  "nodes": [
+    {
+      "id": "trigger-outlook",
+      "name": "Watch Mailbox for Alerts",
+      "type": "n8n-nodes-base.microsoftOutlookTrigger",
+      "typeVersion": 1,
+      "position": [200, 300],
+      "credentials": {
+        "microsoftOutlookOAuth2Api": {
+          "id": "OUTLOOK_CREDENTIAL_ID",
+          "name": "Office 365 Alert Mailbox"
+        }
+      },
+      "parameters": {
+        "pollTimes": {
+          "item": [{ "mode": "everyMinute" }]
+        },
+        "filters": {
+          "readStatus": "unread",
+          "folderIds": ["Inbox"]
+        },
+        "options": {
+          "markAsRead": true
+        }
+      }
+    },
+    {
+      "id": "parse-email",
+      "name": "Parse Alert from Email",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [420, 300],
+      "parameters": {
+        "jsCode": "// Extract structured data from alert email\nconst email = $input.first().json;\n\nconst subject = email.subject || '';\nconst body = email.bodyPreview || email.body?.content || '';\nconst sender = email.from?.emailAddress?.address || '';\nconst receivedAt = email.receivedDateTime || new Date().toISOString();\n\n// Common alert patterns — extend these regexes for your specific services\nconst patterns = {\n  // Device/hostname patterns\n  device: [\n    /(?:device|host|server|computer|endpoint|machine)[:\\s]+([\\w\\-\\.]+)/i,\n    /([\\w\\-]+(?:\\.local|\\.[a-z]{2,})?)[\\s]+(?:is|has|alert|down|offline|failed)/i,\n    /(?:alert on|triggered on|from)[:\\s]+([\\w\\-\\.]+)/i,\n    /hostname[:\\s]+([\\w\\-\\.]+)/i\n  ],\n  // Company/client patterns\n  company: [\n    /(?:client|customer|company|tenant|account)[:\\s]+([\\w\\s\\-\\.&,]+?)(?:\\s*[-|]|\\n|$)/i,\n    /\\[([\\w\\s\\-\\.&]+)\\]/,\n    /^([\\w\\s\\-\\.&]+?)[:\\s]+(?:alert|warning|critical|offline|down)/i\n  ],\n  // Alert type/severity\n  severity: [\n    /(?:severity|priority|level)[:\\s]+(critical|high|medium|low|warning|info)/i,\n    /\\b(critical|urgent|high|medium|low|warning|info)\\b/i\n  ],\n  // Alert description\n  alertType: [\n    /(?:alert|event)[:\\s]+([^\\n]+)/i,\n    /(?:status|condition)[:\\s]+([^\\n]+)/i\n  ]\n};\n\nfunction extractFirst(text, regexList) {\n  for (const regex of regexList) {\n    const match = (subject + ' ' + text).match(regex);\n    if (match && match[1]) return match[1].trim();\n  }\n  return null;\n}\n\nconst device = extractFirst(body, patterns.device);\nconst company = extractFirst(body, patterns.company);\nconst severity = extractFirst(body, patterns.severity) || 'Medium';\nconst alertType = extractFirst(body, patterns.alertType) || subject;\n\nreturn [{\n  json: {\n    subject,\n    body,\n    sender,\n    receivedAt,\n    parsed: {\n      device: device || '',\n      company: company || '',\n      severity: severity,\n      alertType: alertType,\n      needsAIAssist: !device || !company\n    },\n    raw: email\n  }\n}];"
+      }
+    },
+    {
+      "id": "ai-extract",
+      "name": "AI - Extract Company & Device",
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 1,
+      "position": [640, 300],
+      "credentials": {
+        "openAiApi": {
+          "id": "OPENAI_CREDENTIAL_ID",
+          "name": "OpenAI"
+        }
+      },
+      "parameters": {
+        "resource": "chat",
+        "model": "gpt-4o-mini",
+        "messages": {
+          "values": [
+            {
+              "role": "system",
+              "content": "You are an IT alert parser. Extract structured data from alert emails. Respond ONLY with valid JSON — no markdown, no explanation.\n\nExpected output:\n{\n  \"company\": \"<client or company name, or null>\",\n  \"device\": \"<device hostname or name, or null>\",\n  \"alert_summary\": \"<one-line summary of what the alert is about>\",\n  \"severity\": \"<Critical|High|Medium|Low>\",\n  \"service_source\": \"<what service/tool sent this alert, e.g. SolarWinds, Datto, Webroot, etc.>\"\n}"
+            },
+            {
+              "role": "user",
+              "content": "=Subject: {{ $json.subject }}\n\nFrom: {{ $json.sender }}\n\nBody:\n{{ $json.body }}"
+            }
+          ]
+        },
+        "options": {
+          "temperature": 0,
+          "maxTokens": 300
+        }
+      }
+    },
+    {
+      "id": "merge-parsed",
+      "name": "Merge Parsed Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [860, 300],
+      "parameters": {
+        "jsCode": "const emailData = $('Parse Alert from Email').first().json;\nconst aiRaw = $input.first().json;\n\n// Parse AI JSON response\nlet aiData = {};\ntry {\n  const content = aiRaw.choices?.[0]?.message?.content || '{}';\n  aiData = JSON.parse(content.replace(/```json|```/g, '').trim());\n} catch(e) {\n  aiData = {};\n}\n\n// Prefer AI extraction, fall back to regex\nconst company = aiData.company || emailData.parsed.company || '';\nconst device = aiData.device || emailData.parsed.device || '';\nconst severity = aiData.severity || emailData.parsed.severity || 'Medium';\nconst alertSummary = aiData.alert_summary || emailData.parsed.alertType || emailData.subject;\nconst serviceSource = aiData.service_source || 'Unknown Service';\n\nconst severityMap = { Critical: 1, High: 2, Medium: 3, Low: 4 };\nconst priorityId = severityMap[severity] || 3;\n\nreturn [{\n  json: {\n    company,\n    device,\n    severity,\n    priorityId,\n    alertSummary,\n    serviceSource,\n    subject: emailData.subject,\n    body: emailData.body,\n    receivedAt: emailData.receivedAt,\n    sender: emailData.sender\n  }\n}];"
+      }
+    },
+    {
+      "id": "halo-auth",
+      "name": "Halo PSA - Get Auth Token",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1080, 300],
+      "parameters": {
+        "method": "POST",
+        "url": "=https://{{ $vars.HALO_INSTANCE }}.halopsa.com/auth/token",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Content-Type", "value": "application/x-www-form-urlencoded" }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            { "name": "grant_type", "value": "client_credentials" },
+            { "name": "client_id", "value": "={{ $vars.HALO_CLIENT_ID }}" },
+            { "name": "client_secret", "value": "={{ $vars.HALO_CLIENT_SECRET }}" },
+            { "name": "scope", "value": "all" }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "halo-find-client",
+      "name": "Halo PSA - Find Client",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1300, 200],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://{{ $vars.HALO_INSTANCE }}.halopsa.com/api/Client",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $('Halo PSA - Get Auth Token').first().json.access_token }}"
+            }
+          ]
+        },
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            { "name": "search", "value": "={{ $('Merge Parsed Data').first().json.company }}" },
+            { "name": "pagesize", "value": "5" }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "halo-find-asset",
+      "name": "Halo PSA - Find Asset/Device",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1300, 400],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://{{ $vars.HALO_INSTANCE }}.halopsa.com/api/Asset",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $('Halo PSA - Get Auth Token').first().json.access_token }}"
+            }
+          ]
+        },
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            { "name": "search", "value": "={{ $('Merge Parsed Data').first().json.device }}" },
+            { "name": "pagesize", "value": "5" }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "resolve-ids",
+      "name": "Resolve Client & Asset IDs",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1520, 300],
+      "parameters": {
+        "jsCode": "const parsed = $('Merge Parsed Data').first().json;\nconst clientResp = $('Halo PSA - Find Client').first().json;\nconst assetResp = $('Halo PSA - Find Asset/Device').first().json;\n\n// Halo returns { clients: [...] } or { assets: [...] }\nconst clients = clientResp.clients || clientResp || [];\nconst assets = assetResp.assets || assetResp || [];\n\nconst clientArr = Array.isArray(clients) ? clients : [];\nconst assetArr = Array.isArray(assets) ? assets : [];\n\nconst client = clientArr[0] || null;\nconst asset = assetArr[0] || null;\n\nreturn [{\n  json: {\n    ...parsed,\n    clientId: client?.id || null,\n    clientName: client?.name || parsed.company || 'Unknown Client',\n    siteId: client?.main_site_id || null,\n    assetId: asset?.id || null,\n    assetName: asset?.inventory_number || asset?.name || parsed.device || 'Unknown Device',\n    clientFound: !!client,\n    assetFound: !!asset\n  }\n}];"
+      }
+    },
+    {
+      "id": "create-ticket",
+      "name": "Halo PSA - Create Ticket",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1740, 300],
+      "parameters": {
+        "method": "POST",
+        "url": "=https://{{ $vars.HALO_INSTANCE }}.halopsa.com/api/Tickets",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $('Halo PSA - Get Auth Token').first().json.access_token }}"
+            },
+            { "name": "Content-Type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "bodyContentType": "json",
+        "body": "=[\n  {\n    \"summary\": \"[{{ $json.severity }}] {{ $json.alertSummary }}\",\n    \"details\": \"<b>Alert Source:</b> {{ $json.serviceSource }}<br><b>Device:</b> {{ $json.assetName }}<br><b>Received:</b> {{ $json.receivedAt }}<br><br><b>Original Email Subject:</b> {{ $json.subject }}<br><br><b>Alert Details:</b><br>{{ $json.body }}\",\n    \"client_id\": {{ $json.clientId || 'null' }},\n    \"site_id\": {{ $json.siteId || 'null' }},\n    \"asset_id\": {{ $json.assetId || 'null' }},\n    \"tickettype_id\": {{ $vars.HALO_TICKET_TYPE_ID || 1 }},\n    \"status_id\": 1,\n    \"priority_id\": {{ $json.priorityId }},\n    \"dont_do_rules\": false\n  }\n]",
+        "options": {}
+      }
+    },
+    {
+      "id": "check-unmatched",
+      "name": "Flag Unmatched Alerts",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1960, 300],
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": false },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.clientFound }}",
+              "rightValue": false,
+              "operator": { "type": "boolean", "operation": "equals" }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "notify-unmatched",
+      "name": "Email - Alert Needs Manual Review",
+      "type": "n8n-nodes-base.microsoftOutlook",
+      "typeVersion": 2,
+      "position": [2180, 200],
+      "credentials": {
+        "microsoftOutlookOAuth2Api": {
+          "id": "OUTLOOK_CREDENTIAL_ID",
+          "name": "Office 365 Alert Mailbox"
+        }
+      },
+      "parameters": {
+        "operation": "send",
+        "toRecipients": "={{ $vars.ALERT_REVIEW_EMAIL }}",
+        "subject": "=⚠️ Unmatched Alert - Manual Review Needed: {{ $json.subject }}",
+        "bodyContent": "=<p>An incoming alert could not be automatically matched to a Halo PSA client or device.</p><hr><p><b>Detected Company:</b> {{ $json.company || 'Not detected' }}</p><p><b>Detected Device:</b> {{ $json.device || 'Not detected' }}</p><p><b>Alert Summary:</b> {{ $json.alertSummary }}</p><p><b>Source:</b> {{ $json.serviceSource }}</p><p><b>Original Subject:</b> {{ $json.subject }}</p><p>A ticket was still created in Halo PSA — please update the client and device manually.</p>",
+        "options": { "bodyContentType": "html" }
+      }
+    },
+    {
+      "id": "done",
+      "name": "Ticket Created",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [2180, 400],
+      "parameters": {}
+    }
+  ],
+  "connections": {
+    "Watch Mailbox for Alerts": {
+      "main": [[{ "node": "Parse Alert from Email", "type": "main", "index": 0 }]]
+    },
+    "Parse Alert from Email": {
+      "main": [[{ "node": "AI - Extract Company & Device", "type": "main", "index": 0 }]]
+    },
+    "AI - Extract Company & Device": {
+      "main": [[{ "node": "Merge Parsed Data", "type": "main", "index": 0 }]]
+    },
+    "Merge Parsed Data": {
+      "main": [[{ "node": "Halo PSA - Get Auth Token", "type": "main", "index": 0 }]]
+    },
+    "Halo PSA - Get Auth Token": {
+      "main": [
+        [
+          { "node": "Halo PSA - Find Client", "type": "main", "index": 0 },
+          { "node": "Halo PSA - Find Asset/Device", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Halo PSA - Find Client": {
+      "main": [[{ "node": "Resolve Client & Asset IDs", "type": "main", "index": 0 }]]
+    },
+    "Halo PSA - Find Asset/Device": {
+      "main": [[{ "node": "Resolve Client & Asset IDs", "type": "main", "index": 1 }]]
+    },
+    "Resolve Client & Asset IDs": {
+      "main": [[{ "node": "Halo PSA - Create Ticket", "type": "main", "index": 0 }]]
+    },
+    "Halo PSA - Create Ticket": {
+      "main": [[{ "node": "Flag Unmatched Alerts", "type": "main", "index": 0 }]]
+    },
+    "Flag Unmatched Alerts": {
+      "main": [
+        [{ "node": "Email - Alert Needs Manual Review", "type": "main", "index": 0 }],
+        [{ "node": "Ticket Created", "type": "main", "index": 0 }]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": ""
+  },
+  "staticData": null,
+  "tags": ["halo-psa", "email-alerts", "automation"],
+  "active": false,
+  "versionId": "1"
+}
