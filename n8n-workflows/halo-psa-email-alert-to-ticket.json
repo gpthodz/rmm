@@ -44,7 +44,7 @@
       "position": [640, 300],
       "parameters": {
         "method": "POST",
-        "url": "=https://dtho-mlc062v8-eastus2.openai.azure.com/openai/deployments/{{ $vars.AZURE_OPENAI_DEPLOYMENT }}/chat/completions?api-version=2024-02-15-preview",
+        "url": "https://dtho-mlc062v8-eastus2.openai.azure.com/openai/deployments/gpt-5.4-nano/chat/completions?api-version=2024-02-15-preview",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [

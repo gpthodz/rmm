@@ -49,15 +49,15 @@ Go to **Settings → Variables** and create:
 | Variable | Description | Example |
 |---|---|---|
 | `AZURE_OPENAI_API_KEY` | API key from Azure OpenAI resource | `BLEl4av3f...` |
-| `AZURE_OPENAI_DEPLOYMENT` | Your deployed model name | `gpt-4o-mini` |
 | `HALO_INSTANCE` | Your Halo subdomain | `mycompany` |
 | `HALO_CLIENT_ID` | Halo PSA API client ID | `abc123` |
 | `HALO_CLIENT_SECRET` | Halo PSA API client secret | `secret...` |
 | `HALO_TICKET_TYPE_ID` | Ticket type ID for alerts | `1` |
 | `ALERT_REVIEW_EMAIL` | Who gets notified on unmatched alerts | `helpdesk@you.com` |
 
-**Azure OpenAI endpoint** is hardcoded in the workflow:
-`https://dtho-mlc062v8-eastus2.openai.azure.com/`
+**Azure OpenAI endpoint and deployment** are hardcoded in the workflow:
+- Endpoint: `https://dtho-mlc062v8-eastus2.openai.azure.com/`
+- Deployment: `gpt-5.4-nano` (most cost-effective, retires Mar 2027)
 
 To get your Halo API credentials:
 1. In Halo PSA go to **Configuration → Integrations → Halo PSA API**
